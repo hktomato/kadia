@@ -36,7 +36,7 @@ if __name__ == '__main__':
 		print("Usage: %s driverPath" % sys.argv[0])
 		sys.exit()
 
-	driver = DriverAnaysis(sys.argv[1])
+	driver = DriverAnalysis(sys.argv[1])
 	irp_func = driver.find_irp_func()
 
 	print("DispatchIRP function : 0x%x" % irp_func)
