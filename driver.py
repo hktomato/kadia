@@ -16,6 +16,9 @@ class DriverAnalysis:
 		self.mj_create = 0
 		self.mj_device_control = 0
 
+	def isWDM(self):
+		return True if self.project.loader.find_symbol('IoCreateDevice') else False
+
 	def set_mj_functions(self, state):
 		self.mj_create = state.mem[arg_driverobject + MJ_CREATE_OFFSET].uint64_t.concrete
 		self.mj_device_control = state.solver.eval(state.inspect.mem_write_expr)
@@ -49,10 +52,15 @@ class DriverAnalysis:
 
 if __name__ == '__main__':
 	if len(sys.argv) <= 1:
-		print("Usage: %s driverPath" % sys.argv[0])
+		print("[!] Usage: %s driverPath" % sys.argv[0])
 		sys.exit()
 
 	driver = DriverAnalysis(sys.argv[1])
+
+	if not driver.isWDM():
+		print("[!] '%s' is not a WDM driver." % sys.argv[1])
+		sys.exit()
+
 	mj_device_control_func = driver.find_mj_device_control()
 
-	print("DispatchIRP function : 0x%x" % mj_device_control_func)
+	print("[+] DispatchIRP function : 0x%x" % mj_device_control_func)
