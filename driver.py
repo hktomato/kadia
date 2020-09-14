@@ -1,6 +1,7 @@
 # find_dispatchirp_func.py
 import sys
 import angr
+import archinfo
 
 arg_driverobject = 0xdead0000
 arg_registrypath = 0xdead8000
@@ -16,20 +17,21 @@ class WDMDriverAnalysis:
 		self.mj_create = 0
 		self.mj_device_control = 0
 
+		# set the default calling convention
+		if isinstance(self.project.arch, archinfo.ArchAMD64):
+			self._default_cc = angr.calling_conventions.SimCCMicrosoftAMD64(self.project.arch)
+		else:
+			raise ValueError('Unsupported architecture')
+
 	def isWDM(self):
-		return True if self.project.loader.find_symbol('IoCreateDevice') else False
+	        return True if self.project.loader.find_symbol('IoCreateDevice') else False
 
 	def set_mj_functions(self, state):
-		addr = state.addr
-		print (state.callstack)
-
 		self.mj_create = state.mem[arg_driverobject + MJ_CREATE_OFFSET].uint64_t.concrete
 		self.mj_device_control = state.solver.eval(state.inspect.mem_write_expr)
 
 	def find_mj_device_control(self):
-		state = self.project.factory.entry_state()
-		state.regs.rcx = arg_driverobject # arg1 - DriverObject
-		state.regs.rdx = arg_registrypath # arg2 - RegistryPath
+		state = self.project.factory.call_state(self.project.entry, arg_driverobject, arg_registrypath, cc=self._default_cc)
 
 		simgr = self.project.factory.simgr(state)
 
