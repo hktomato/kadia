@@ -6,6 +6,8 @@ import archinfo
 arg_driverobject = 0xdead0000
 arg_registrypath = 0xdead8000
 
+DOS_DEVICES = "\\DosDevices\\".encode('utf-16le')
+
 MJ_DEVICE_CONTROL_OFFSET = 0xe0
 MJ_CREATE_OFFSET = 0x70
 
@@ -54,6 +56,19 @@ class WDMDriverAnalysis:
 					break
 
 		return self.mj_device_control
+	def find_device_name(self, path):
+		f = open(path, 'rb')
+		data = f.read()
+		
+		cursor = data.find(DOS_DEVICES)
+		terminate = data.find(b'\x00\x00', cursor)
+		
+		if ( terminate - cursor) %2:
+		    terminate +=1
+		match = data[cursor:terminate].decode('utf-16le')
+		f.close()
+		return match
+
 
 if __name__ == '__main__':
 	if len(sys.argv) <= 1:
@@ -65,7 +80,7 @@ if __name__ == '__main__':
 	if not driver.isWDM():
 		print("[!] '%s' is not a WDM driver." % sys.argv[1])
 		sys.exit()
-
+	device_name = driver.find_device_name(sys.argv[1])
 	mj_device_control_func = driver.find_mj_device_control()
-
+	print("[+] Device Name : %s" % device_name)
 	print("[+] DispatchIRP function : 0x%x" % mj_device_control_func)
