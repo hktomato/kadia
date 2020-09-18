@@ -1,13 +1,20 @@
 # find_dispatchirp_func.py
+from capstone import *
 import sys
 import angr
 import archinfo
 
+DOS_DEVICES = "\\DosDevices\\".encode('utf-16le')
+
 arg_driverobject = 0xdead0000
 arg_registrypath = 0xdead8000
+arg_deviceobject = 0xdeadc000
+arg_irp = 0xdead1000
 
 MJ_DEVICE_CONTROL_OFFSET = 0xe0
 MJ_CREATE_OFFSET = 0x70
+
+IO_STACK_LOCATION_OFFSET = 0xb8
 
 class WDMDriverAnalysis:
 	def __init__(self, _driverpath):
@@ -25,6 +32,19 @@ class WDMDriverAnalysis:
 
 	def isWDM(self):
 	        return True if self.project.loader.find_symbol('IoCreateDevice') else False
+            
+	def find_device_name(self, path):
+		f = open(path, 'rb')
+		data = f.read()
+
+		cursor = data.find(DOS_DEVICES)
+		terminate = data.find(b'\x00\x00', cursor)
+
+		if ( terminate - cursor) %2:
+		    terminate +=1
+		match = data[cursor:terminate].decode('utf-16le')
+		f.close()
+		return match
 
 	def set_mj_functions(self, state):
 		self.mj_create = state.mem[arg_driverobject + MJ_CREATE_OFFSET].uint64_t.concrete
@@ -44,7 +64,7 @@ class WDMDriverAnalysis:
 		simgr.use_technique(angr.exploration_techniques.dfs.DFS())
 		simgr.run(until=lambda x: self.mj_device_control)
 
-		# Second exploration
+		# Second exploration	
 		# to skip default mj function initialization.
 		if self.mj_device_control == self.mj_create:
 			for i in range(50):
@@ -54,18 +74,54 @@ class WDMDriverAnalysis:
 					break
 
 		return self.mj_device_control
+	
+	def find_ioctl_state(self, mj_device_control):
+		state = self.project.factory.call_state(mj_device_control, arg_deviceobject, arg_irp, cc=self._default_cc)
 
+		simgr = self.project.factory.simgr(state)
+		cfg = self.project.analyses.CFGFast(function_starts=(mj_device_control,), normalize=True)		
+		#cfg = self.project.analyses.CFGEmulated(keep_state=False,max_iterations=5,normalize=True,starts=(mj_device_control,),)
+		#print("This is the graph:", cfg.graph.nodes)
+		
+		nodes = cfg.nodes()
+		node_list = list(nodes)
+		md = Cs(CS_ARCH_X86, CS_MODE_64)
+
+		#import ipdb; ipdb.set_trace()
+		nt_status = []
+		node_cnt = 0
+		for node in node_list:
+			try:
+				byte = node.block.bytes
+				
+			except:	
+				del node_list[node_cnt]
+				node_cnt += 1
+			for i in md.disasm(byte, node.addr):
+				#print(hex(i.address), i.mnemonic ,i.op_str)
+				if i.mnemonic == 'mov' and '0xc00000' in i.op_str:
+					nt_status.append(i.address)
+		print('[+] NT_STATUS address : ', nt_status)
+				
 if __name__ == '__main__':
 	if len(sys.argv) <= 1:
 		print("[!] Usage: %s driverPath" % sys.argv[0])
 		sys.exit()
-
+	
 	driver = WDMDriverAnalysis(sys.argv[1])
 
 	if not driver.isWDM():
 		print("[!] '%s' is not a WDM driver." % sys.argv[1])
 		sys.exit()
+	
+	device_name = driver.find_device_name(sys.argv[1])
+	print("[+] Device Name : %s" % device_name)
 
+	
 	mj_device_control_func = driver.find_mj_device_control()
 
 	print("[+] DispatchIRP function : 0x%x" % mj_device_control_func)
+
+	ioctlcode = driver.find_ioctl_state(mj_device_control_func)
+
+	print("[+] ioctlcode : 0x" , ioctlcode)
