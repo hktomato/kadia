@@ -1,8 +1,9 @@
-# find_dispatchirp_func.py
-from capstone import *
 import sys
 import angr
-import archinfo
+import logging
+from capstone import *
+
+import winproject
 
 DOS_DEVICES = "\\DosDevices\\".encode('utf-16le')
 
@@ -87,7 +88,6 @@ class WDMDriverAnalysis:
 		node_list = list(nodes)
 		md = Cs(CS_ARCH_X86, CS_MODE_64)
 
-		#import ipdb; ipdb.set_trace()
 		nt_status = []
 		node_cnt = 0
 		for node in node_list:
@@ -104,11 +104,13 @@ class WDMDriverAnalysis:
 		print('[+] NT_STATUS address : ', nt_status)
 				
 if __name__ == '__main__':
+	logging.getLogger('angr').setLevel('NOTSET')
+
 	if len(sys.argv) <= 1:
 		print("[!] Usage: %s driverPath" % sys.argv[0])
 		sys.exit()
-	
-	driver = WDMDriverAnalysis(sys.argv[1])
+
+	driver = winproject.WDMDriverAnalysis(sys.argv[1])
 
 	if not driver.isWDM():
 		print("[!] '%s' is not a WDM driver." % sys.argv[1])
@@ -117,11 +119,8 @@ if __name__ == '__main__':
 	device_name = driver.find_device_name(sys.argv[1])
 	print("[+] Device Name : %s" % device_name)
 
-	
 	mj_device_control_func = driver.find_mj_device_control()
-
 	print("[+] DispatchIRP function : 0x%x" % mj_device_control_func)
 
-	ioctlcode = driver.find_ioctl_state(mj_device_control_func)
-
-	print("[+] ioctlcode : 0x" , ioctlcode)
+	ioctl_codes = driver.find_ioctl_codes()
+	print("[+] IOCTL Control Code :", ioctl_codes)
