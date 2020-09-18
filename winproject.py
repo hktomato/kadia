@@ -3,11 +3,17 @@ import sys
 import angr
 import archinfo
 
+import structures
+import explore_technique
+
 MJ_DEVICE_CONTROL_OFFSET = 0xe0
 MJ_CREATE_OFFSET = 0x70
 
 arg_driverobject = 0xdead0000
 arg_registrypath = 0xdead8000
+
+arg_irp = 0xdeac0000
+arg_iostacklocation = 0xdead8000
 
 class WDMDriverFactory(angr.factory.AngrObjectFactory):
 	def __init__(self, *args, **kwargs):
@@ -20,7 +26,8 @@ class WDMDriverFactory(angr.factory.AngrObjectFactory):
 			raise ValueError('Unsupported architecture')
 
 	def call_state(self, addr, *args, **kwargs):
-		kwargs['add_options'] = kwargs.pop('add_options', angr.options.unicorn)
+		# Todo : little endian and big endian confliction.
+		#kwargs['add_options'] = kwargs.pop('add_options', angr.options.unicorn)
 		cc = kwargs.pop('cc', self._default_cc)
 		kwargs['cc'] = cc
 
@@ -71,4 +78,23 @@ class WDMDriverAnalysis(angr.Project):
 		return self.mj_device_control
 
 	def find_ioctl_codes(self):
-		pass
+		state = self.project.factory.call_state(self.mj_device_control,
+												arg_driverobject,
+												arg_irp)
+		simgr = self.project.factory.simgr(state)
+
+		io_stack_location = structures.IO_STACK_LOCATION(state, arg_iostacklocation)
+		irp = structures.IRP(state, arg_irp)
+
+		state.solver.add(irp.fields['Tail.Overlay.CurrentStackLocation'] == io_stack_location.address)
+		state.solver.add(irp.fields['IoStatus.Status'] == 0)
+		state.solver.add(io_stack_location.fields['MajorFunction'] == 14)
+
+		ioctl_code_finder = explore_technique.IoctlCodeFinder(io_stack_location)
+		simgr.use_technique(ioctl_code_finder)
+		simgr.run()
+
+		ioctl_codes = ioctl_code_finder.get_codes()
+		ioctl_codes.sort()
+		
+		return list(map(hex, ioctl_codes))

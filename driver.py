@@ -2,14 +2,11 @@ import sys
 import angr
 
 import winproject
-import structures
-
-def _step_func(state):
-	if state.solver.max(state.globals.io_stack_location.fields['IoControlCode']) == 1:
-		print("aaaa")
-	print("bbbb")
+import logging
 
 if __name__ == '__main__':
+	logging.getLogger('angr').setLevel('NOTSET')
+
 	if len(sys.argv) <= 1:
 		print("[!] Usage: %s driverPath" % sys.argv[0])
 		sys.exit()
@@ -22,3 +19,7 @@ if __name__ == '__main__':
 
 	mj_device_control_func = driver.find_mj_device_control()
 	print("[+] DispatchIRP function : 0x%x" % mj_device_control_func)
+
+	ioctl_codes = driver.find_ioctl_codes()
+	print("[+] IOCTL Control Code :", ioctl_codes)
+	
