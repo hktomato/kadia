@@ -2,6 +2,7 @@
 import sys
 import angr
 import archinfo
+from capstone import *
 
 import structures
 import explore_technique
@@ -9,6 +10,7 @@ import explore_technique
 MJ_DEVICE_CONTROL_OFFSET = 0xe0
 MJ_CREATE_OFFSET = 0x70
 
+arg_deviceobject = 0xdead9000
 arg_driverobject = 0xdead0000
 arg_registrypath = 0xdead8000
 
@@ -44,10 +46,23 @@ class WDMDriverAnalysis(angr.Project):
 
 		self.mj_create = 0
 		self.mj_device_control = 0
+		self.driver_path = args[0]
 
 	
 	def isWDM(self):
 	        return True if self.project.loader.find_symbol('IoCreateDevice') else False
+
+	def find_device_name(self):
+		DOS_DEVICES = "\\DosDevices\\".encode('utf-16le')
+		data = open(self.driver_path, 'rb').read()
+
+		cursor = data.find(DOS_DEVICES)
+		terminate = data.find(b'\x00\x00', cursor)
+
+		if ( terminate - cursor) %2:
+		    terminate +=1
+		match = data[cursor:terminate].decode('utf-16le')
+		return match
 
 	def set_mj_functions(self, state):
 		self.mj_create = state.mem[arg_driverobject + MJ_CREATE_OFFSET].uint64_t.concrete
@@ -97,4 +112,33 @@ class WDMDriverAnalysis(angr.Project):
 		ioctl_codes = ioctl_code_finder.get_codes()
 		ioctl_codes.sort()
 		
-		return list(map(hex, ioctl_codes))
+		return ioctl_codes
+
+	def find_ioctl_codes2(self):
+		state = self.project.factory.call_state(self.mj_device_control, arg_deviceobject, arg_irp)
+
+		simgr = self.project.factory.simgr(state)
+		cfg = self.project.analyses.CFGFast(function_starts=(self.mj_device_control,), normalize=True)		
+		#cfg = self.project.analyses.CFGEmulated(keep_state=False,max_iterations=5,normalize=True,starts=(self.mj_device_control,),)
+		#print("This is the graph:", cfg.graph.nodes)
+		
+		nodes = cfg.nodes()
+		node_list = list(nodes)
+		md = Cs(CS_ARCH_X86, CS_MODE_64)
+
+		nt_status = []
+		node_cnt = 0
+		for node in node_list:
+			try:
+				byte = node.block.bytes
+				
+			except:	
+				del node_list[node_cnt]
+				node_cnt += 1
+			for i in md.disasm(byte, node.addr):
+				#print(hex(i.address), i.mnemonic ,i.op_str)
+				if i.mnemonic == 'mov' and '0xc00000' in i.op_str:
+					nt_status.append(i.address)
+		#print('[+] NT_STATUS address : ', nt_status)
+		nt_status.sort()
+		return nt_status
