@@ -1,11 +1,13 @@
 import sys
 import angr
 import logging
+import datetime
+import boltons.timeutils
 
-import winproject
-	
+import winproject	
 				
 if __name__ == '__main__':
+	start_time = datetime.datetime.utcnow()
 	logging.getLogger('angr').setLevel('FATAL')
 
 	if len(sys.argv) <= 1:
@@ -26,6 +28,9 @@ if __name__ == '__main__':
 
 	ioctl_codes = driver.find_ioctl_codes()
 	print("[+] IOCTL Control Code :", ioctl_codes)
+
+	#nt_status = driver.find_ioctl_codes2()
+	#print('[+] NT_STATUS address : ', nt_status)
 	
-	nt_status = driver.find_ioctl_codes2()
-	print('[+] NT_STATUS address : ', nt_status)
+	elapsed = boltons.timeutils.decimal_relative_time(start_time, datetime.datetime.utcnow())
+	print("[*] completed in: {0:.1f} {1}".format(*elapsed))

@@ -1,15 +1,10 @@
 import angr
 
 class IoctlCodeFinder(angr.ExplorationTechnique):
-	def __init__(self, io_stack_location, deferred_stash='deferred'):
+	def __init__(self, io_stack_location):
 		super(IoctlCodeFinder, self).__init__()
-		self.deferred_stash = deferred_stash
 		self.io_stack_location = io_stack_location
 		self.ioctl_codes = []
-
-	def setup(self, simgr):
-		if self.deferred_stash not in simgr.stashes:
-			simgr.stashes[self.deferred_stash] = []
 
 	def step(self, simgr, stash='active', **kwargs):
 		simgr = simgr.step(stash=stash, **kwargs)
@@ -21,9 +16,8 @@ class IoctlCodeFinder(angr.ExplorationTechnique):
 						simgr.stashes[stash].remove(state)
 						continue
 					
-					self.ioctl_codes.append(io_code)
+					self.ioctl_codes.append(hex(io_code))
 					simgr.stashes[stash].remove(state)
-					break
 				except:
 					pass
 					

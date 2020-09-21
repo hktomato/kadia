@@ -1,4 +1,3 @@
-# find_dispatchirp_func.py
 import sys
 import angr
 import archinfo
