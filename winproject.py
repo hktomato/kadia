@@ -1,20 +1,25 @@
+import re
 import sys
 import angr
+import claripy
 import archinfo
-from capstone import *
+#from pprint import pprint as pp
 
 import structures
 import explore_technique
 
 MJ_DEVICE_CONTROL_OFFSET = 0xe0
 MJ_CREATE_OFFSET = 0x70
-
 arg_deviceobject = 0xdead9000
 arg_driverobject = 0xdead0000
 arg_registrypath = 0xdead8000
-
 arg_irp = 0xdeac0000
 arg_iostacklocation = 0xdead8000
+
+def ast_repr(node):
+		if not isinstance(node, claripy.ast.Base):
+			raise TypeError('node must be an instance of claripy.ast.Base not: ' + repr(node))
+		return re.sub(r'([^a-zA-Z][a-zA-Z]+)_\d+_\d+([^\d]|$)', r'\1\2', node.__repr__(inner=True))
 
 class WDMDriverFactory(angr.factory.AngrObjectFactory):
 	def __init__(self, *args, **kwargs):
@@ -37,7 +42,7 @@ class WDMDriverFactory(angr.factory.AngrObjectFactory):
 class WDMDriverAnalysis(angr.Project):
 	def __init__(self, *args, **kwargs):
 		kwargs['auto_load_libs'] = kwargs.pop('auto_load_libs', False)
-		#kwargs['use_sim_procedures'] = kwargs.pop('use_sim_procedures', False)
+		#kwargs['use_sim_procedures'] = kw++-------args.pop('use_sim_procedures', False)
 		super(WDMDriverAnalysis, self).__init__(*args, **kwargs)
 
 		self.factory = WDMDriverFactory(self)
@@ -92,9 +97,7 @@ class WDMDriverAnalysis(angr.Project):
 		return self.mj_device_control
 
 	def find_ioctl_codes(self):
-		state = self.project.factory.call_state(self.mj_device_control,
-												arg_driverobject,
-												arg_irp)
+		state = self.project.factory.call_state(self.mj_device_control, arg_driverobject, arg_irp)
 		simgr = self.project.factory.simgr(state)
 
 		io_stack_location = structures.IO_STACK_LOCATION(state, arg_iostacklocation)
@@ -107,37 +110,25 @@ class WDMDriverAnalysis(angr.Project):
 		ioctl_code_finder = explore_technique.IoctlCodeFinder(io_stack_location)
 		simgr.use_technique(ioctl_code_finder)
 		simgr.run()
-
-		ioctl_codes = ioctl_code_finder.get_codes()
-		ioctl_codes.sort()
 		
-		return ioctl_codes
-
-	def find_ioctl_codes2(self):
-		state = self.project.factory.call_state(self.mj_device_control, arg_deviceobject, arg_irp)
-
-		simgr = self.project.factory.simgr(state)
-		cfg = self.project.analyses.CFGFast(function_starts=(self.mj_device_control,), normalize=True)		
-		#cfg = self.project.analyses.CFGEmulated(keep_state=False,max_iterations=5,normalize=True,starts=(self.mj_device_control,),)
-		#print("This is the graph:", cfg.graph.nodes)
+		for i in range(10): 
+			simgr.step(stash='constraints')
+			
+		constraints_list = []
+		ret = []
+		for state in simgr.stashes['constraints']:
+			for constraint in state.solver.constraints:
+				con = ast_repr(constraint)
+				if 'InputBufferLength' in con:
+					constraints_list.append(con)
+				elif 'OutputBufferLength' in con:
+					constraints_list.append(con)
+						
+			value = {
+				'IoControlCode': state.solver.eval(io_stack_location.fields['IoControlCode']),
+				'constraints': set(constraints_list)
+			}
+			#pp(value)
+			ret.append(value)	
 		
-		nodes = cfg.nodes()
-		node_list = list(nodes)
-		md = Cs(CS_ARCH_X86, CS_MODE_64)
-
-		nt_status = []
-		node_cnt = 0
-		for node in node_list:
-			try:
-				byte = node.block.bytes
-				
-			except:	
-				del node_list[node_cnt]
-				node_cnt += 1
-			for i in md.disasm(byte, node.addr):
-				#print(hex(i.address), i.mnemonic ,i.op_str)
-				if i.mnemonic == 'mov' and '0xc00000' in i.op_str:
-					nt_status.append(i.address)
-		#print('[+] NT_STATUS address : ', nt_status)
-		nt_status.sort()
-		return nt_status
+		return ret
