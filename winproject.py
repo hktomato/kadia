@@ -3,10 +3,10 @@ import sys
 import angr
 import claripy
 import archinfo
-#from pprint import pprint as pp
-
+from pprint import pprint as pp
 import structures
 import explore_technique
+from capstone import *
 
 MJ_DEVICE_CONTROL_OFFSET = 0xe0
 MJ_CREATE_OFFSET = 0x70
@@ -99,7 +99,31 @@ class WDMDriverAnalysis(angr.Project):
 	def find_ioctl_codes(self):
 		state = self.project.factory.call_state(self.mj_device_control, arg_driverobject, arg_irp)
 		simgr = self.project.factory.simgr(state)
+		
+		cfg = self.project.analyses.CFGFast(function_starts=(self.mj_device_control,), normalize=True)
+		
+		nodes = cfg.nodes()
+		node_list = list(nodes)
+		md = Cs(CS_ARCH_X86, CS_MODE_64)
 
+		nt_status = []
+		node_cnt = 0
+		for node in node_list:
+			try:
+				byte = node.block.bytes
+
+			except:	
+				del node_list[node_cnt]
+				node_cnt += 1
+			for i in md.disasm(byte, node.addr):
+				#print(hex(i.address), i.mnemonic ,i.op_str)
+				if i.mnemonic == 'mov' and '0xc00000' in i.op_str:
+					nt_status.append(i.address)
+		#print('[+] NT_STATUS address : ', nt_status)
+		nt_status.sort()
+		
+		#print(nt_status)
+		
 		io_stack_location = structures.IO_STACK_LOCATION(state, arg_iostacklocation)
 		irp = structures.IRP(state, arg_irp)
 
@@ -110,14 +134,27 @@ class WDMDriverAnalysis(angr.Project):
 		ioctl_code_finder = explore_technique.IoctlCodeFinder(io_stack_location)
 		simgr.use_technique(ioctl_code_finder)
 		simgr.run()
-		
+		simgr.stashes['deadended'] = []
+				
 		for i in range(10): 
+			#import ipdb; ipdb.set_trace()
+					
 			simgr.step(stash='constraints')
-			
+			for s in simgr.stashes['constraints']:
+				if s.addr in nt_status:
+					simgr.stashes['constraints'].remove(s)
+
 		constraints_list = []
 		ret = []
+
+		simgr.move(from_stash = 'deadended', to_stash = 'constraints')
+		
+		#import ipdb; ipdb.set_trace()
+		print(len(simgr.stashes['deadended']), len(simgr.stashes['constraints']))		
+		
 		for state in simgr.stashes['constraints']:
-			for constraint in state.solver.constraints:
+			#import ipdb; ipdb.set_trace()
+			for constraint in state.solver.constraints:				
 				con = ast_repr(constraint)
 				if 'InputBufferLength' in con:
 					constraints_list.append(con)
@@ -128,7 +165,8 @@ class WDMDriverAnalysis(angr.Project):
 				'IoControlCode': state.solver.eval(io_stack_location.fields['IoControlCode']),
 				'constraints': set(constraints_list)
 			}
-			#pp(value)
-			ret.append(value)	
+			pp(value)
+			constraints_list = []
+			#ret.append(value)	
 		
 		return ret
