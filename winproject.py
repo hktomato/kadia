@@ -3,7 +3,7 @@ import sys
 import angr
 import claripy
 import archinfo
-#from pprint import pprint as pp
+from pprint import pprint as pp
 
 import structures
 import explore_technique
@@ -110,25 +110,33 @@ class WDMDriverAnalysis(angr.Project):
 		ioctl_code_finder = explore_technique.IoctlCodeFinder(io_stack_location)
 		simgr.use_technique(ioctl_code_finder)
 		simgr.run()
+		simgr.stashes['deadended'] = []
 		
 		for i in range(10): 
 			simgr.step(stash='constraints')
-			
-		constraints_list = []
+		
+		simgr.move(from_stash='deadended', to_stash='constraints')
+		
+		
 		ret = []
+		count = 1
 		for state in simgr.stashes['constraints']:
+			constraints_list = []
+			print(state.solver.max_int(io_stack_location.fields['InputBufferLength']))
 			for constraint in state.solver.constraints:
 				con = ast_repr(constraint)
 				if 'InputBufferLength' in con:
 					constraints_list.append(con)
 				elif 'OutputBufferLength' in con:
 					constraints_list.append(con)
-						
+		
 			value = {
+				'NO': count,
 				'IoControlCode': state.solver.eval(io_stack_location.fields['IoControlCode']),
-				'constraints': set(constraints_list)
+				'constraints': constraints_list,
 			}
 			#pp(value)
+			count += 1
 			ret.append(value)	
 		
 		return ret
