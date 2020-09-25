@@ -14,7 +14,7 @@ if __name__ == '__main__':
 		print("[!] Usage: %s driverPath" % sys.argv[0])
 		sys.exit()
 
-	driver = winproject.WDMDriverAnalysis(sys.argv[1])
+	driver = winproject.WDMDriverAnalysis(sys.argv[1], support_selfmodifying_code=True, allowed_call_mode=True)
 
 	if not driver.isWDM():
 		print("[!] '%s' is not a WDM driver." % sys.argv[1])
@@ -26,8 +26,8 @@ if __name__ == '__main__':
 	mj_device_control_func = driver.find_mj_device_control()
 	print("[+] DispatchIRP function : 0x%x" % mj_device_control_func)
 
-	ioctl_codes = driver.find_ioctl_codes()
-	print("[+] IOCTL Control Code :", ioctl_codes)
+	ioctl_interface = driver.recovey_ioctl_interface()
+	print("[+] IOCTL Interface :", ioctl_interface)	
 	
 	elapsed = boltons.timeutils.decimal_relative_time(start_time, datetime.datetime.utcnow())
 	print("[*] completed in: {0:.1f} {1}".format(*elapsed))

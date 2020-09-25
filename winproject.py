@@ -7,19 +7,24 @@ from pprint import pprint as pp
 
 import structures
 import explore_technique
+from static_analysis import FunctionAnalysis
 
 MJ_DEVICE_CONTROL_OFFSET = 0xe0
 MJ_CREATE_OFFSET = 0x70
-arg_deviceobject = 0xdead9000
-arg_driverobject = 0xdead0000
-arg_registrypath = 0xdead8000
-arg_irp = 0xdeac0000
-arg_iostacklocation = 0xdead8000
+
+arg_deviceobject = 0xdead0000
+arg_driverobject = 0xdead1000
+arg_registrypath = 0xdead2000
+
+arg_irp = 0xdead3000
+arg_iostacklocation = 0xdead4000
+
+import ipdb
 
 def ast_repr(node):
-		if not isinstance(node, claripy.ast.Base):
-			raise TypeError('node must be an instance of claripy.ast.Base not: ' + repr(node))
-		return re.sub(r'([^a-zA-Z][a-zA-Z]+)_\d+_\d+([^\d]|$)', r'\1\2', node.__repr__(inner=True))
+	if not isinstance(node, claripy.ast.Base):
+		raise TypeError('node must be an instance of claripy.ast.Base not: ' + repr(node))
+	return re.sub(r'([^a-zA-Z][a-zA-Z]+)_\d+_\d+([^\d]|$)', r'\1\2', node.__repr__(inner=True))
 
 class WDMDriverFactory(angr.factory.AngrObjectFactory):
 	def __init__(self, *args, **kwargs):
@@ -42,7 +47,12 @@ class WDMDriverFactory(angr.factory.AngrObjectFactory):
 class WDMDriverAnalysis(angr.Project):
 	def __init__(self, *args, **kwargs):
 		kwargs['auto_load_libs'] = kwargs.pop('auto_load_libs', False)
-		#kwargs['use_sim_procedures'] = kw++-------args.pop('use_sim_procedures', False)
+		#kwargs['use_sim_procedures'] = kwargs.pop('use_sim_procedures', False)
+		
+		self.driver_path = args[0]
+		self.func_analyzer = FunctionAnalysis(self.driver_path)
+		self.allowed_call_mode = kwargs.pop('allowed_call_mode', False)
+
 		super(WDMDriverAnalysis, self).__init__(*args, **kwargs)
 
 		self.factory = WDMDriverFactory(self)
@@ -50,8 +60,8 @@ class WDMDriverAnalysis(angr.Project):
 
 		self.mj_create = 0
 		self.mj_device_control = 0
-		self.driver_path = args[0]
 
+		self.constraints = []
 	
 	def isWDM(self):
 	        return True if self.project.loader.find_symbol('IoCreateDevice') else False
@@ -72,8 +82,51 @@ class WDMDriverAnalysis(angr.Project):
 		self.mj_create = state.mem[arg_driverobject + MJ_CREATE_OFFSET].uint64_t.concrete
 		self.mj_device_control = state.solver.eval(state.inspect.mem_write_expr)
 
+	def allowed_call_technique(self, state):
+		# Analyze prototype of the current function.
+		func_prototypes = self.func_analyzer.prototype(state.addr)
+
+		allowed = False
+		for arg_type in func_prototypes:
+			if '+' not in arg_type: 		# register
+				argument = getattr(state.regs, arg_type)
+			else:					# stack value
+				offset = int(arg_type.split('+')[-1], 16)
+				if 'rsp' in arg_type:
+					argument = state.mem[state.regs.rsp + offset].uint64_t.resolved
+				else:
+					argument = state.mem[state.regs.rbp + offset].uint64_t.resolved
+
+			if argument.symbolic:
+				argument = str(argument)
+
+				for arg in self.allowed_arguments:
+					if isinstance(arg, str) and arg in argument:
+						allowed = True
+			else:
+				argument = state.solver.eval(argument)
+
+				if argument in self.allowed_arguments:
+					allowed = True
+
+			if allowed == True:
+				break
+
+		if not allowed:
+			state.mem[state.regs.rip].uint8_t = 0xc3
+			state.regs.rax = state.solver.BVS('ret', 64)
+
+
+	def use_allowed_call_technique(self, state, arguments):
+		self.allowed_arguments = arguments
+
+		state.inspect.b('call', action=self.allowed_call_technique)
+
 	def find_mj_device_control(self):
 		state = self.project.factory.call_state(self.project.entry, arg_driverobject, arg_registrypath)
+		if self.allowed_call_mode:
+			self.use_allowed_call_technique(state, [arg_driverobject])
+
 		simgr = self.project.factory.simgr(state)
 
 		# Break on DriverObject->MajorFuntion[MJ_DEVICE_CONTROL]
@@ -96,8 +149,28 @@ class WDMDriverAnalysis(angr.Project):
 
 		return self.mj_device_control
 
-	def find_ioctl_codes(self):
+	def cond_read_systembuffer(self, state):
+		return 'SystemBuffer' in str(state.inspect.mem_read_address)
+
+	def cond_write_systembuffer(self, state):
+		return 'SystemBuffer' in str(state.inspect.mem_write_address)
+
+	def action_systembuffer(self, state):
+		for constraint in state.solver.constraints:
+			str_constraint = ast_repr(constraint)
+
+			if 'InputBufferLength' in str_constraint or 'OutputBufferLength' in str_constraint:
+				self.constraints.append(str_constraint)
+
+	def recovey_ioctl_interface(self):
 		state = self.project.factory.call_state(self.mj_device_control, arg_driverobject, arg_irp)
+		
+    # for medcored.sys (should be removed.)
+		setattr(state.mem[0x10C5B8], 'uint64_t', state.solver.BVS('x', 64))
+
+		if self.allowed_call_mode:
+			self.use_allowed_call_technique(state, [arg_iostacklocation, 'IoControlCode', 'InputBuffer', 'CurrentStackLocation'])
+
 		simgr = self.project.factory.simgr(state)
 
 		io_stack_location = structures.IO_STACK_LOCATION(state, arg_iostacklocation)
@@ -107,36 +180,20 @@ class WDMDriverAnalysis(angr.Project):
 		state.solver.add(irp.fields['IoStatus.Status'] == 0)
 		state.solver.add(io_stack_location.fields['MajorFunction'] == 14)
 
-		ioctl_code_finder = explore_technique.IoctlCodeFinder(io_stack_location)
-		simgr.use_technique(ioctl_code_finder)
+		state_finder = explore_technique.SwitchStateFinder(io_stack_location.fields['IoControlCode'])
+		simgr.use_technique(state_finder)
 		simgr.run()
-		simgr.stashes['deadended'] = []
-		
-		for i in range(10): 
-			simgr.step(stash='constraints')
-		
-		simgr.move(from_stash='deadended', to_stash='constraints')
-		
-		
-		ret = []
-		count = 1
-		for state in simgr.stashes['constraints']:
-			constraints_list = []
-			print(state.solver.max_int(io_stack_location.fields['InputBufferLength']))
-			for constraint in state.solver.constraints:
-				con = ast_repr(constraint)
-				if 'InputBufferLength' in con:
-					constraints_list.append(con)
-				elif 'OutputBufferLength' in con:
-					constraints_list.append(con)
-		
-			value = {
-				'NO': count,
-				'IoControlCode': state.solver.eval(io_stack_location.fields['IoControlCode']),
-				'constraints': constraints_list,
-			}
-			#pp(value)
-			count += 1
-			ret.append(value)	
-		
-		return ret
+
+		ioctl_interface = []
+		switch_states = state_finder.get_states()
+		for ioctl_code, state in switch_states.items():
+			state.inspect.b('mem_read', condition=self.cond_read_systembuffer, action=self.action_systembuffer)
+			state.inspect.b('mem_write', condition=self.cond_write_systembuffer, action=self.action_systembuffer)
+
+			simgr = self.project.factory.simgr(state)
+			simgr.run(until=lambda x: len(self.constraints))
+
+			ioctl_interface.append({'code': ioctl_code, 'constraints':self.constraints})
+			self.constraints = []
+
+		return ioctl_interface
