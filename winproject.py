@@ -3,7 +3,7 @@ import sys
 import angr
 import claripy
 import archinfo
-from capstone import *
+from pprint import pprint as pp
 
 import structures
 import explore_technique
@@ -163,10 +163,9 @@ class WDMDriverAnalysis(angr.Project):
 				self.constraints.append(str_constraint)
 
 	def recovey_ioctl_interface(self):
-		state = self.project.factory.call_state(self.mj_device_control,
-												arg_driverobject,
-												arg_irp)
-		# for medcored.sys (should be removed.)
+		state = self.project.factory.call_state(self.mj_device_control, arg_driverobject, arg_irp)
+		
+    # for medcored.sys (should be removed.)
 		setattr(state.mem[0x10C5B8], 'uint64_t', state.solver.BVS('x', 64))
 
 		if self.allowed_call_mode:

@@ -35,4 +35,3 @@ class SwitchStateFinder(angr.ExplorationTechnique):
 
 	def get_states(self):
 		return self.switch_states
-
