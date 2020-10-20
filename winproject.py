@@ -1,6 +1,7 @@
 import re
 import sys
 import angr
+import json
 import claripy
 import archinfo
 from symbolic import explore_technique
@@ -298,10 +299,10 @@ class WDMDriverAnalysis(angr.Project):
 
             for constraint in sat_state.history.jump_guards:
                 if 'Buffer' in str(constraint):
-                    constraints.append(constraint)
+                    constraints.append(str(constraint).lower())
                 if 'global_' in str(constraint):
-                    constraints.append(constraint)
+                    constraints.append(str(constraint).lower())
 
             ioctl_interface.append({'code': hex(ioctl_code), 'constraints': constraints})
-        
+            
         return ioctl_interface
