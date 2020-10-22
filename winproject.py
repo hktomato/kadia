@@ -1,7 +1,6 @@
 import re
 import sys
 import angr
-import json
 import claripy
 import archinfo
 from symbolic import explore_technique
@@ -298,11 +297,43 @@ class WDMDriverAnalysis(angr.Project):
             sat_state = get_satisfied_state(sat_state, unsat_state)
 
             for constraint in sat_state.history.jump_guards:
+                '''
                 if 'Buffer' in str(constraint):
-                    constraints.append(str(constraint).lower())
+                    constraints.append(str(constraint))
                 if 'global_' in str(constraint):
-                    constraints.append(str(constraint).lower())
-
+                    constraints.append(str(constraint))
+                '''
+                if 'Buffer' in str(constraint):
+                    if 'InputBufferLength' in str(constraint):
+                        con = 'InputBufferLength'
+                    elif 'OutputBufferLength' in str(constraint):
+                        con = 'OutputBufferLength'
+                    else:
+                        continue
+                    input = str(constraint)[str(constraint).find('h')+8:-1].split()
+                    min = 0
+                    max = 0xffffffff
+                    if input[0] == '==':
+                        min = int(input[1], 16)
+                        max = int(input[1], 16)
+                    elif input[0] == '>=':
+                        min = int(input[1], 16)
+                    elif input[0] == '<=':
+                        max = int(input[1], 16)
+                    elif input[0] == '>':
+                        min = int(input[1], 16)+1
+                    elif input[0] == '<':
+                        max = int(input[1], 16)-1
+                    elif input[0] == '!=':
+                        min = 1
+                    else:
+                        if input[2] == None:
+                            continue
+                        elif input[2] == '==':
+                            min = int(input[1], 16)
+                            max = int(input[1], 16)
+                    constraints.append({con : {'min' : hex(min), 'max' : hex(max)}})
+                    
             ioctl_interface.append({'code': hex(ioctl_code), 'constraints': constraints})
             
         return ioctl_interface

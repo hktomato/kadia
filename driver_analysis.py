@@ -15,7 +15,6 @@ def setup_logging(args):
 def make_json(args_out):
 	with open('./output.json','w', encoding='utf-8') as make_file:
 		json.dump(ioctl_interface, make_file, indent="\t")
-		# constraints max, min to json
 
 if __name__ == '__main__':
 	start_time = datetime.datetime.utcnow()
